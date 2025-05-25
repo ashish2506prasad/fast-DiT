@@ -108,51 +108,53 @@ def center_crop_arr(pil_image, image_size):
 #################################################################################
 
 def main(args):
-    """
-    Trains a new DiT model.
-    """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
-    # Setup DDP:
-    dist.init_process_group("nccl")
-    assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
-    rank = dist.get_rank()
+    # Setup DDP if launched with torch.distributed.launch or torchrun
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        dist.init_process_group(backend="nccl")
+        distributed = True
+    else:
+        distributed = False
+
+    world_size = dist.get_world_size() if distributed else 1
+    rank = dist.get_rank() if distributed else 0
     device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
+    seed = args.global_seed * world_size + rank
+
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
+    print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
 
-    # Setup a feature folder:
+    # Setup feature folder only from rank 0
     if rank == 0:
         os.makedirs(args.features_path, exist_ok=True)
         os.makedirs(os.path.join(args.features_path, 'imagenet256_features'), exist_ok=True)
         os.makedirs(os.path.join(args.features_path, 'imagenet256_labels'), exist_ok=True)
 
-    # Create model:
-    assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+    # Create model
+    assert args.image_size % 8 == 0, "Image size must be divisible by 8."
     latent_size = args.image_size // 8
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
-    # Setup data:
+    # Setup data
     transform = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+        transforms.Normalize(mean=[0.5]*3, std=[0.5]*3, inplace=True)
     ])
     dataset = ImageFolder(args.data_path, transform=transform)
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=dist.get_world_size(),
-        rank=rank,
-        shuffle=False,
-        seed=args.global_seed
-    )
+
+    if distributed:
+        sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=args.global_seed)
+    else:
+        sampler = None
+
     loader = DataLoader(
         dataset,
-        batch_size = 1,
-        shuffle=False,
+        batch_size=1,
+        shuffle=(sampler is None),
         sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
@@ -164,17 +166,14 @@ def main(args):
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
-            # Map input images to latent space + normalize latents:
             x = vae.encode(x).latent_dist.sample().mul_(0.18215)
-            
-        x = x.detach().cpu().numpy()    # (1, 4, 32, 32)
+        x = x.detach().cpu().numpy()
+        y = y.detach().cpu().numpy()
         np.save(f'{args.features_path}/imagenet256_features/{train_steps}.npy', x)
-
-        y = y.detach().cpu().numpy()    # (1,)
         np.save(f'{args.features_path}/imagenet256_labels/{train_steps}.npy', y)
-            
         train_steps += 1
         print(train_steps)
+
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
