@@ -153,7 +153,7 @@ def main(args):
 
     loader = DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=args.global_batch_size // world_size,
         shuffle=(sampler is None),
         sampler=sampler,
         num_workers=args.num_workers,
@@ -169,10 +169,28 @@ def main(args):
             x = vae.encode(x).latent_dist.sample().mul_(0.18215)
         x = x.detach().cpu().numpy()
         y = y.detach().cpu().numpy()
-        np.save(f'{args.features_path}/imagenet256_features/{train_steps}.npy', x)
-        np.save(f'{args.features_path}/imagenet256_labels/{train_steps}.npy', y)
-        train_steps += 1
-        print(train_steps)
+        
+        # Save each sample in the batch individually to maintain file structure
+        for i in range(x.shape[0]):
+            np.save(f'{args.features_path}/imagenet256_features/{train_steps}.npy', x[i:i+1])
+            np.save(f'{args.features_path}/imagenet256_labels/{train_steps}.npy', y[i:i+1])
+            train_steps += 1
+        
+        if train_steps % 100 == 0:  # Print less frequently
+            print(f"Processed {train_steps} samples")
+
+    # save a zip file of the features and labels
+    if rank == 0:
+        import zipfile
+        with zipfile.ZipFile(f'{args.features_path}/imagenet256_features.zip', 'w') as zipf:
+            for file in glob(f'{args.features_path}/imagenet256_features/*.npy'):
+                zipf.write(file, os.path.relpath(file, args.features_path))
+        with zipfile.ZipFile(f'{args.features_path}/imagenet256_labels.zip', 'w') as zipf:
+            for file in glob(f'{args.features_path}/imagenet256_labels/*.npy'):
+                zipf.write(file, os.path.relpath(file, args.features_path))
+    print(f"Finished processing {train_steps} samples.")
+    
+    
 
 
 if __name__ == "__main__":
@@ -185,7 +203,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--global-batch-size", type=int, default=256)
+    parser.add_argument("--global-batch-size", type=int, default=10)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
