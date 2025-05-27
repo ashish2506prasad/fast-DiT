@@ -27,6 +27,7 @@ import argparse
 import logging
 import os
 from accelerate import Accelerator
+import json
 
 from models import DiT_models
 from diffusion import create_diffusion
@@ -161,8 +162,8 @@ def main(args):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     # Setup data:
-    features_dir = f"{args.feature_path}/imagenet256_features"
-    labels_dir = f"{args.feature_path}/imagenet256_labels"
+    features_dir = f"{args.feature_path}/imagenet256_features/imagenet256_features"
+    labels_dir = f"{args.feature_path}/imagenet256_labels/imagenet256_labels"
     dataset = CustomDataset(features_dir, labels_dir)
     loader = DataLoader(
         dataset,
@@ -185,13 +186,15 @@ def main(args):
     train_steps = 0
     log_steps = 0
     running_loss = 0
-    start_time = time()
     
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
+        print(f"Training for {args.epochs} epochs...")
+    loss_list = []
     for epoch in range(args.epochs):
         if accelerator.is_main_process:
             logger.info(f"Beginning epoch {epoch}...")
+            print(f"Beginning epoch {epoch}...")
         for x, y in loader:
             x = x.to(device)
             y = y.to(device)
@@ -224,6 +227,7 @@ def main(args):
                 running_loss = 0
                 log_steps = 0
                 start_time = time()
+                loss_list.append(avg_loss)
 
             # Save DiT checkpoint:
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
@@ -237,6 +241,22 @@ def main(args):
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
+
+    with open(f"./results/loss.json", "w") as f:
+        json.dump(loss_list, f)
+    # with open(f"./results/train_steps_dwt_eval.json", "w") as f:
+    #     json.dump(train_steps_dwt_eval_dict, f, indent=4)
+
+    checkpoint = {
+                "model": model.module.state_dict(),
+                "ema": ema.state_dict(),
+                "opt": opt.state_dict(),
+                "args": args
+            }
+    checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
+    torch.save(checkpoint, checkpoint_path)
+    logger.info(f"Saved checkpoint to {checkpoint_path}")
+    print(f"Saved checkpoint to {checkpoint_path}")
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
@@ -259,6 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--ckpt-every", type=int, default=700)
+    parser.add_argument("--token-mixer", type=str, default="linformer", choices=["linformer", "nystromformer", "performer", "softmax"])
     args = parser.parse_args()
     main(args)
