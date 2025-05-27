@@ -268,12 +268,12 @@ def main(args):
                 z = torch.cat([z, z], 0)
                 y_null = torch.tensor([20] * n, device=device)
                 y = torch.cat([y, y_null], 0)
-                model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                # model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
 
                 # Sample images:
                 samples = diffusion.p_sample_loop(
-                    model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device,
-                    save_timestep_output=args.save_timestep_images, class_gen=class_labels[0], train_step=train_steps
+                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device,
+                    save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
                 )
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
                 samples = vae.decode(samples / 0.18215).sample
