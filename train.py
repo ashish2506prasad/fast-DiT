@@ -28,10 +28,12 @@ import logging
 import os
 from accelerate import Accelerator
 import json
+from torchvision.utils import save_image
 
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
+from sample import sample_main
 
 
 #################################################################################
@@ -130,6 +132,7 @@ def main(args):
     # Setup accelerator:
     accelerator = Accelerator()
     device = accelerator.device
+    os.makedirs("training_image_generation", exist_ok=True)
 
     # Setup an experiment folder:
     if accelerator.is_main_process:
@@ -186,7 +189,7 @@ def main(args):
     train_steps = 0
     log_steps = 0
     running_loss = 0
-    
+    start_time = time()
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
         print(f"Training for {args.epochs} epochs...")
@@ -221,13 +224,63 @@ def main(args):
                 # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 avg_loss = avg_loss.item() / accelerator.num_processes
+                start_time = time()
                 if accelerator.is_main_process:
                     logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0
-                start_time = time()
                 loss_list.append(avg_loss)
+
+            if train_steps%1==0:
+                model.eval()
+                torch.manual_seed(0)
+                torch.set_grad_enabled(False)
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+
+            
+                # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
+                assert args.image_size in [256, 512]
+                # assert args.num_classes == 1000
+
+                # Load model:
+                # latent_size = args.image_size // 8
+                # model = DiT_models[args.model](
+                #     input_size=latent_size,
+                #     num_classes=args.num_classes
+                # ).to(device)
+                # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
+                # ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
+                # state_dict = find_model(ckpt_path)
+                # model.load_state_dict(state_dict)
+                # model.eval()  # important!
+                num_sampling_steps=500
+                diffusion = create_diffusion(str(num_sampling_steps))
+                vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+                # Labels to condition the model with (feel free to change):
+                class_labels = [297]
+
+                n = len(class_labels)
+                z = torch.randn(n, 4, latent_size, latent_size, device=device)
+                y = torch.tensor(class_labels, device=device)
+
+                # Setup classifier-free guidance:
+                z = torch.cat([z, z], 0)
+                y_null = torch.tensor([20] * n, device=device)
+                y = torch.cat([y, y_null], 0)
+                model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+
+                # Sample images:
+                samples = diffusion.p_sample_loop(
+                    model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device,
+                    save_timestep_output=args.save_timestep_images, class_gen=class_labels[0], train_step=train_steps
+                )
+                samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                samples = vae.decode(samples / 0.18215).sample
+
+                # Save and display images:
+                save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps}.png", nrow=4, normalize=True, value_range=(-1, 1))
+
 
             # Save DiT checkpoint:
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
@@ -244,8 +297,6 @@ def main(args):
 
     with open(f"./results/loss.json", "w") as f:
         json.dump(loss_list, f)
-    # with open(f"./results/train_steps_dwt_eval.json", "w") as f:
-    #     json.dump(train_steps_dwt_eval_dict, f, indent=4)
 
     checkpoint = {
                 "model": model.module.state_dict(),
@@ -280,6 +331,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=700)
-    parser.add_argument("--token-mixer", type=str, default="linformer", choices=["linformer", "nystromformer", "performer", "softmax"])
+    parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
     args = parser.parse_args()
     main(args)

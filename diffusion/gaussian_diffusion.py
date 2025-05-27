@@ -9,6 +9,8 @@ import math
 import numpy as np
 import torch as th
 import enum
+import json
+import os
 
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
 
@@ -382,6 +384,7 @@ class GaussianDiffusion:
         denoised_fn=None,
         cond_fn=None,
         model_kwargs=None,
+        save_timestep_output=False,
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -414,6 +417,7 @@ class GaussianDiffusion:
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
+
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
 
     def p_sample_loop(
@@ -427,6 +431,9 @@ class GaussianDiffusion:
         model_kwargs=None,
         device=None,
         progress=False,
+        save_timestep_output=False,
+        class_gen=None,
+        train_step=None,
     ):
         """
         Generate samples from the model.
@@ -457,6 +464,9 @@ class GaussianDiffusion:
             model_kwargs=model_kwargs,
             device=device,
             progress=progress,
+            save_timestep_output=save_timestep_output,
+            class_gen=class_gen,
+            train_step = train_step
         ):
             final = sample
         return final["sample"]
@@ -472,6 +482,9 @@ class GaussianDiffusion:
         model_kwargs=None,
         device=None,
         progress=False,
+        save_timestep_output=False,
+        class_gen=None,
+        train_step = None
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -480,6 +493,7 @@ class GaussianDiffusion:
         Returns a generator over dicts, where each dict is the return value of
         p_sample().
         """
+        save_timestep_output_list = []
         if device is None:
             device = next(model.parameters()).device
         assert isinstance(shape, (tuple, list))
@@ -488,6 +502,8 @@ class GaussianDiffusion:
         else:
             img = th.randn(*shape, device=device)
         indices = list(range(self.num_timesteps))[::-1]
+
+        print("number of diffusion steps:", self.num_timesteps)
 
         if progress:
             # Lazy import so that we don't depend on tqdm.
@@ -506,9 +522,22 @@ class GaussianDiffusion:
                     denoised_fn=denoised_fn,
                     cond_fn=cond_fn,
                     model_kwargs=model_kwargs,
+                    save_timestep_output=save_timestep_output,
                 )
                 yield out
+                if save_timestep_output:
+                    save_timestep_output_list.append(
+                        {
+                            "timestep": i,
+                            "sample": out["sample"].cpu().numpy().tolist()
+                        }
+                    )
                 img = out["sample"]
+        os.makedirs("debug_outputs", exist_ok=True)
+        if save_timestep_output:
+            print(f"Saving timestep outputs to debug_outputs/timestep_output_{train_step}_{class_gen}.json")
+            with open(f"debug_outputs/timestep_output_{train_step}_{class_gen}.json", "w") as f:
+                json.dump(save_timestep_output_list, f)
 
     def ddim_sample(
         self,
