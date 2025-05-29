@@ -134,21 +134,15 @@ def main(args):
     device = accelerator.device
     os.makedirs("training_image_generation", exist_ok=True)
 
-    # Setup an experiment folder:
     if accelerator.is_main_process:
-        os.makedirs(args.results_dir, exist_ok=True)
+        os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
         experiment_index = len(glob(f"{args.results_dir}/*"))
-        model_string_name = args.model.replace("/", "-")
-        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"
-        os.makedirs(f"{experiment_dir}/checkpoints", exist_ok=True)
+        model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
+        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+        checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
+        os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-    else:
-        # Dummy placeholder for sync, will be overwritten later
-        experiment_dir = None
-
-    experiment_dir = accelerator.broadcast(experiment_dir)
-    checkpoint_dir = f"{experiment_dir}/checkpoints"
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
@@ -290,17 +284,17 @@ def main(args):
 
 
             # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0 and train_steps > 0:
-                if accelerator.is_main_process:
-                    checkpoint = {
-                        "model": model.module.state_dict(),
-                        "ema": ema.state_dict(),
-                        "opt": opt.state_dict(),
-                        "args": args
-                    }
-                    checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-                    torch.save(checkpoint, checkpoint_path)
-                    logger.info(f"Saved checkpoint to {checkpoint_path}")
+            # if train_steps % args.ckpt_every == 0 and train_steps > 0:
+            #     if accelerator.is_main_process:
+            #         checkpoint = {
+            #             "model": model.module.state_dict(),
+            #             "ema": ema.state_dict(),
+            #             "opt": opt.state_dict(),
+            #             "args": args
+            #         }
+            #         checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
+            #         torch.save(checkpoint, checkpoint_path)
+            #         logger.info(f"Saved checkpoint to {checkpoint_path}")
 
     with open(f"./results/loss.json", "w") as f:
         json.dump(loss_list, f)
