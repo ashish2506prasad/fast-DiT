@@ -225,13 +225,14 @@ def main(args):
                 avg_loss = avg_loss.item() / accelerator.num_processes
                 if accelerator.is_main_process:
                     logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
+                    print(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0
                 loss_list.append(avg_loss)
                 start_time = time()
 
-            if train_steps%1==0:
+            if train_steps%20==0:
                 with torch.no_grad():
                     model.eval()
                     torch.manual_seed(0)
