@@ -291,7 +291,7 @@ def main(args):
                     "opt": opt.state_dict(),
                     "args": args
                 }
-        checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
+        checkpoint_path = f"{checkpoint_dir}/dit_xs_2.pt"
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved checkpoint to {checkpoint_path}")
         print(f"Saved checkpoint to {checkpoint_path}")
