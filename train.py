@@ -268,7 +268,7 @@ def main(args):
                 z = torch.cat([z, z], 0)
                 y_null = torch.tensor([20] * n, device=device)
                 y = torch.cat([y, y_null], 0)
-                model_kwargs_ = dict(y=y, cfg_scale=4)
+                model_kwargs_ = dict(y=y)
 
                 # Sample images:
                 samples = diffusion.p_sample_loop(
