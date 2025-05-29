@@ -286,7 +286,7 @@ def main(args):
 
     if accelerator.is_main_process:
         checkpoint = {
-                    "model": model.module.state_dict(),
+                    "model": accelerator.unwrap_model(model).state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
                     "args": args
