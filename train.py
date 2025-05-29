@@ -139,10 +139,17 @@ def main(args):
         experiment_index = len(glob(f"{args.results_dir}/*"))
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
         experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
-        checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
-        os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(experiment_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
+    else:
+        # Set default values for non-main processes
+        experiment_dir = f"{args.results_dir}/000-{args.model.replace('/', '-')}"
+
+    # Move this outside the if block so all processes can access it:
+    checkpoint_dir = f"{experiment_dir}/checkpoints"
+    if accelerator.is_main_process:
+        os.makedirs(checkpoint_dir, exist_ok=True)
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
