@@ -232,69 +232,46 @@ def main(args):
                 start_time = time()
 
             if train_steps%1==0:
-                model.eval()
-                torch.manual_seed(0)
-                torch.set_grad_enabled(False)
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                with torch.no_grad():
+                    model.eval()
+                    torch.manual_seed(0)
+                    torch.set_grad_enabled(False)
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            
-                # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
-                assert args.image_size in [256, 512]
-                # assert args.num_classes == 1000
+                
+                    # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
+                    assert args.image_size in [256, 512]
+                    # assert args.num_classes == 1000
+                    num_sampling_steps=500
+                    diffusion = create_diffusion(str(num_sampling_steps))
+                    print("created diffusion")
+                    vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+                    # Labels to condition the model with (feel free to change):
+                    class_labels = [18]
 
-                # Load model:
-                # latent_size = args.image_size // 8
-                # model = DiT_models[args.model](
-                #     input_size=latent_size,
-                #     num_classes=args.num_classes
-                # ).to(device)
-                # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
-                # ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
-                # state_dict = find_model(ckpt_path)
-                # model.load_state_dict(state_dict)
-                # model.eval()  # important!
-                num_sampling_steps=500
-                diffusion = create_diffusion(str(num_sampling_steps))
-                print("created diffusion")
-                vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
-                # Labels to condition the model with (feel free to change):
-                class_labels = [18]
+                    n = len(class_labels)
+                    z = torch.randn(n, 4, latent_size, latent_size, device=device)
+                    y = torch.tensor(class_labels, device=device)
 
-                n = len(class_labels)
-                z = torch.randn(n, 4, latent_size, latent_size, device=device)
-                y = torch.tensor(class_labels, device=device)
+                    # Setup classifier-free guidance:
+                    z = torch.cat([z, z], 0)
+                    y_null = torch.tensor([20] * n, device=device)
+                    y = torch.cat([y, y_null], 0)
+                    model_kwargs_ = dict(y=y)
 
-                # Setup classifier-free guidance:
-                z = torch.cat([z, z], 0)
-                y_null = torch.tensor([20] * n, device=device)
-                y = torch.cat([y, y_null], 0)
-                model_kwargs_ = dict(y=y)
+                    # Sample images:
+                    samples = diffusion.p_sample_loop(
+                        model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
+                        save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
+                    )
+                    print("sampled images")
+                    samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                    samples = vae_.decode(samples / 0.18215).sample
 
-                # Sample images:
-                samples = diffusion.p_sample_loop(
-                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
-                    save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
-                )
-                print("sampled images")
-                samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-                samples = vae_.decode(samples / 0.18215).sample
-
-                # Save and display images:
-                save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps}.png", nrow=4, normalize=True, value_range=(-1, 1))
-
-
-            # Save DiT checkpoint:
-            # if train_steps % args.ckpt_every == 0 and train_steps > 0:
-            #     if accelerator.is_main_process:
-            #         checkpoint = {
-            #             "model": model.module.state_dict(),
-            #             "ema": ema.state_dict(),
-            #             "opt": opt.state_dict(),
-            #             "args": args
-            #         }
-            #         checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-            #         torch.save(checkpoint, checkpoint_path)
-            #         logger.info(f"Saved checkpoint to {checkpoint_path}")
+                    # Save and display images:
+                    save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps}.png", nrow=4, normalize=True, value_range=(-1, 1))
+                model.train()
+                torch.set_grad_enabled(True)
 
     with open(f"./results/loss.json", "w") as f:
         json.dump(loss_list, f)
