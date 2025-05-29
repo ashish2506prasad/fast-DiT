@@ -258,7 +258,7 @@ def main(args):
                 diffusion = create_diffusion(str(num_sampling_steps))
                 vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
                 # Labels to condition the model with (feel free to change):
-                class_labels = [297]
+                class_labels = [18]
 
                 n = len(class_labels)
                 z = torch.randn(n, 4, latent_size, latent_size, device=device)
