@@ -14,9 +14,6 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-from attention_modules.linformer import LinformerSelfAttention
-from attention_modules.nystromfrmer import NystromAttention
-from attention_modules.performer import PerformerSelfAttention
 
 
 def modulate(x, shift, scale):
@@ -105,23 +102,10 @@ class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-    def __init__(self, hidden_size, num_heads, num_patches, mlp_ratio=4.0 , token_mixer='softmax', **block_kwargs):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        if token_mixer == 'softmax':
-            self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
-        elif token_mixer == 'linformer':
-            # self.attn = Linf(dim=hidden_size, depth=1, heads= num_heads, dim_head=hidden_size//num_heads, mlp_dim=hidden_size*mlp_ratio, one_kv_head=False, share_kv=False, k=1000 ,seq_len=num_patches, **block_kwargs)
-            self.attn = LinformerSelfAttention(dim=hidden_size, seq_len=num_patches, heads=num_heads, one_kv_head=False, share_kv=False, **block_kwargs)
-        elif token_mixer == 'nystromformer':
-            # self.attn = Nystromformer(dim=hidden_size, depth=1, heads=num_heads, **block_kwargs)
-            self.attn = NystromAttention(dim=hidden_size, dim_head=64, heads=num_heads, num_landmarks=256, pinv_iterations=6, residual=True, residual_conv_kernel=33, eps=1e-8, dropout=0.0)
-        elif token_mixer == 'performer':
-            # self.attn = Performer(dim=hidden_size, depth=1, heads=num_heads, mlp_dim=int(hidden_size*mlp_ratio), dim_head=64,**block_kwargs)
-            self.attn = PerformerSelfAttention(dim=hidden_size, heads=num_heads, dim_head=64, **block_kwargs)
-        else:
-            raise ValueError(f"Unknown token mixer: {token_mixer}")
-
+        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
@@ -157,6 +141,7 @@ class FinalLayer(nn.Module):
         x = self.linear(x)
         return x
 
+
 class DiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
@@ -170,7 +155,6 @@ class DiT(nn.Module):
         depth=28,
         num_heads=16,
         mlp_ratio=4.0,
-        token_mixer='softmax',
         class_dropout_prob=0.1,
         num_classes=1000,
         learn_sigma=True,
@@ -190,7 +174,7 @@ class DiT(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, num_patches=num_patches, token_mixer=token_mixer) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
@@ -245,6 +229,12 @@ class DiT(nn.Module):
         x = torch.einsum('nhwpqc->nchpwq', x)
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
+    
+    def ckpt_wrapper(self, module):
+        def ckpt_forward(*inputs):
+            outputs = module(*inputs)
+            return outputs
+        return ckpt_forward
 
     def forward(self, x, t, y):
         """
@@ -280,7 +270,6 @@ class DiT(nn.Module):
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1)
-
 
 
 #################################################################################
