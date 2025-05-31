@@ -248,7 +248,7 @@ def main(args):
                     # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
                     assert args.image_size in [256, 512]
                     # assert args.num_classes == 1000
-                    num_sampling_steps=250
+                    num_sampling_steps=200
                     diffusion = create_diffusion(str(num_sampling_steps))
                     print("created diffusion")
                     vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
