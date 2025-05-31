@@ -239,23 +239,21 @@ def main(args):
                 loss_list.append(avg_loss)
                 start_time = time()
 
-            if train_steps%20==0:
+            if train_steps%(args.save_img_after)==0:
                 with torch.no_grad():
                     model.eval()
                     torch.manual_seed(0)
                     torch.set_grad_enabled(False)
                     device = "cuda" if torch.cuda.is_available() else "cpu"
-
-                
                     # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
                     assert args.image_size in [256, 512]
                     # assert args.num_classes == 1000
-                    num_sampling_steps=500
+                    num_sampling_steps=250
                     diffusion = create_diffusion(str(num_sampling_steps))
                     print("created diffusion")
                     vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
                     # Labels to condition the model with (feel free to change):
-                    class_labels = [18]
+                    class_labels = [15]
 
                     n = len(class_labels)
                     z = torch.randn(n, 4, latent_size, latent_size, device=device)
@@ -277,7 +275,8 @@ def main(args):
                     samples = vae_.decode(samples / 0.18215).sample
 
                     # Save and display images:
-                    save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps}.png", nrow=4, normalize=True, value_range=(-1, 1))
+                    # save image like 000001 etc in 7 digit numbers
+                    save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
                 model.train()
                 torch.set_grad_enabled(True)
 
@@ -319,5 +318,6 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=700)
     parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
+    parser.add_argument("--save-img-after", type=int, default=30)
     args = parser.parse_args()
     main(args)
