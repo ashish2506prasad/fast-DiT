@@ -138,7 +138,7 @@ def main(args):
         os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
         experiment_index = len(glob(f"{args.results_dir}/*"))
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+        experiment_dir = f"{args.results_dir}/{model_string_name}"  # Create an experiment folder
         os.makedirs(experiment_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
@@ -200,6 +200,7 @@ def main(args):
         logger.info(f"Training for {args.epochs} epochs...")
         print(f"Training for {args.epochs} epochs...")
     loss_list = []
+    epoch = 0
     for epoch in range(args.epochs):
         if accelerator.is_main_process:
             logger.info(f"Beginning epoch {epoch}...")
@@ -239,44 +240,45 @@ def main(args):
                 loss_list.append(avg_loss)
                 start_time = time()
 
-            if train_steps%(args.save_img_after)==0:
-                with torch.no_grad():
-                    model.eval()
-                    torch.manual_seed(0)
-                    torch.set_grad_enabled(False)
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                    # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
-                    assert args.image_size in [256, 512]
-                    # assert args.num_classes == 1000
-                    num_sampling_steps=200
-                    diffusion = create_diffusion(str(num_sampling_steps))
-                    print("created diffusion")
-                    vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
-                    # Labels to condition the model with (feel free to change):
-                    class_labels = [15]
+            if args.save_img_after > 0:
+                if train_steps%(args.save_img_after)==0:
+                    with torch.no_grad():
+                        model.eval()
+                        torch.manual_seed(0)
+                        torch.set_grad_enabled(False)
+                        device = "cuda" if torch.cuda.is_available() else "cpu"
+                        # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
+                        assert args.image_size in [256, 512]
+                        # assert args.num_classes == 1000
+                        num_sampling_steps=200
+                        diffusion = create_diffusion(str(num_sampling_steps))
+                        print("created diffusion")
+                        vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+                        # Labels to condition the model with (feel free to change):
+                        class_labels = [15]
 
-                    n = len(class_labels)
-                    z = torch.randn(n, 4, latent_size, latent_size, device=device)
-                    y = torch.tensor(class_labels, device=device)
+                        n = len(class_labels)
+                        z = torch.randn(n, 4, latent_size, latent_size, device=device)
+                        y = torch.tensor(class_labels, device=device)
 
-                    # Setup classifier-free guidance:
-                    z = torch.cat([z, z], 0)
-                    y_null = torch.tensor([20] * n, device=device)
-                    y = torch.cat([y, y_null], 0)
-                    model_kwargs_ = dict(y=y)
+                        # Setup classifier-free guidance:
+                        z = torch.cat([z, z], 0)
+                        y_null = torch.tensor([20] * n, device=device)
+                        y = torch.cat([y, y_null], 0)
+                        model_kwargs_ = dict(y=y)
 
-                    # Sample images:
-                    samples = diffusion.p_sample_loop(
-                        model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
-                        save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
-                    )
-                    print("sampled images")
-                    samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-                    samples = vae_.decode(samples / 0.18215).sample
+                        # Sample images:
+                        samples = diffusion.p_sample_loop(
+                            model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
+                            save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
+                        )
+                        print("sampled images")
+                        samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                        samples = vae_.decode(samples / 0.18215).sample
 
-                    # Save and display images:
-                    # save image like 000001 etc in 7 digit numbers
-                    save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
+                        # Save and display images:
+                        # save image like 000001 etc in 7 digit numbers
+                        save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
                 model.train()
                 torch.set_grad_enabled(True)
 
@@ -288,9 +290,9 @@ def main(args):
                     "model": accelerator.unwrap_model(model).state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
-                    "args": args
+                    "args": args,
                 }
-        checkpoint_path = f"{checkpoint_dir}/dit_xs_2.pt"
+        checkpoint_path = f"{checkpoint_dir}/dit_xs_2 _epoch_{epoch}.pt"
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved checkpoint to {checkpoint_path}")
         print(f"Saved checkpoint to {checkpoint_path}")
@@ -318,6 +320,17 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=700)
     parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
-    parser.add_argument("--save-img-after", type=int, default=30)
+    parser.add_argument("--save-img-after", type=int, default=30)  # set to -1 to disable image saving during training
     args = parser.parse_args()
+
+    import os
+    import re
+    
+    def get_latest_checkpoint(path='.'):
+        ckpts = [f for f in os.listdir(path) if f.startswith('checkpoint_step_')]
+        if not ckpts:
+            return None
+        ckpts = sorted(ckpts, key=lambda x: int(re.findall(r'\d+', x)[-1]))
+        return os.path.join(path, ckpts[-1])
+
     main(args)

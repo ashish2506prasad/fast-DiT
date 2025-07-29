@@ -26,7 +26,7 @@ from time import time
 import argparse
 import logging
 import os
-
+from pytorch_wavelets import DWTForward, DWTInverse
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
@@ -103,6 +103,29 @@ def center_crop_arr(pil_image, image_size):
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
 
 
+def extract_dwt_features(latent, num_dwt_levels=1, device='cpu'):
+    """
+    Extract features from the latent representation using Discrete Wavelet Transform (DWT).
+    Performs n levels of DWT on the latent representation. So the output size will be 2^n times smaller than the input size.
+    Args:
+        latent (torch.Tensor): Latent representation of shape (batch_size, channels, height, width).
+        num_dwt_levels (int): Number of DWT levels to apply.
+        device (str): Device to perform the computation on ('cpu' or 'cuda').
+    Returns:
+        torch.Tensor: DWT features of shape (batch_size, channels, height // (2 ** num_dwt_levels), width // (2 ** num_dwt_levels)).
+    """
+    dwt = DWTForward(J=1, wave='haar').to(device)
+    ll = latent
+    for _ in range(num_dwt_levels):
+        ll, (lh, hl, hh) = dwt(ll)
+        ll = ll.to(device)
+        lh = lh.to(device)
+        hl = hl.to(device)
+        hh = hh.to(device)
+    
+    return ll
+
+
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
@@ -117,6 +140,8 @@ def main(args):
     else:
         distributed = False
 
+    num_dwt_levels = args.num_dwt_levels
+    assert num_dwt_levels >= 0, "Number of DWT levels must be non-negative."
     world_size = dist.get_world_size() if distributed else 1
     rank = dist.get_rank() if distributed else 0
     device = rank % torch.cuda.device_count()
@@ -129,8 +154,8 @@ def main(args):
     # Setup feature folder only from rank 0
     if rank == 0:
         os.makedirs(args.features_path, exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_features'), exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_labels'), exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, 'imagenet256_{num_dwt_levels}_dwt_features'), exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, 'imagenet256_{num_dwt_levels}_dwt_labels'), exist_ok=True)
 
     # Create model
     assert args.image_size % 8 == 0, "Image size must be divisible by 8."
@@ -167,13 +192,14 @@ def main(args):
         y = y.to(device)
         with torch.no_grad():
             x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            x = extract_dwt_features(x, num_dwt_levels=num_dwt_levels, device=device)
         x = x.detach().cpu().numpy()
         y = y.detach().cpu().numpy()
         
         # Save each sample in the batch individually to maintain file structure
-        for i in range(x.shape[0]):
-            np.save(f'{args.features_path}/imagenet256_features/{train_steps}.npy', x[i:i+1])
-            np.save(f'{args.features_path}/imagenet256_labels/{train_steps}.npy', y[i:i+1])
+        for i in range(x.shape[0]): # x.shape = (batch_size, channels, height, width)
+            np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/{train_steps}.npy', x[i:i+1])
+            np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/{train_steps}.npy', y[i:i+1])
             train_steps += 1
         
         if train_steps % 100 == 0:  # Print less frequently
@@ -182,11 +208,11 @@ def main(args):
     # save a zip file of the features and labels
     if rank == 0:
         import zipfile
-        with zipfile.ZipFile(f'{args.features_path}/imagenet256_features.zip', 'w') as zipf:
-            for file in glob(f'{args.features_path}/imagenet256_features/*.npy'):
+        with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features.zip', 'w') as zipf:
+            for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/*.npy'):
                 zipf.write(file, os.path.relpath(file, args.features_path))
-        with zipfile.ZipFile(f'{args.features_path}/imagenet256_labels.zip', 'w') as zipf:
-            for file in glob(f'{args.features_path}/imagenet256_labels/*.npy'):
+        with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels.zip', 'w') as zipf:
+            for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/*.npy'):
                 zipf.write(file, os.path.relpath(file, args.features_path))
     print(f"Finished processing {train_steps} samples.")
     
@@ -209,5 +235,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--num-dwt-levels", type=int, default=1, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
     main(args)
