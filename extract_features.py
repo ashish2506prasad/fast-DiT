@@ -114,15 +114,8 @@ def extract_dwt_features(latent, num_dwt_levels=1, device='cpu'):
     Returns:
         torch.Tensor: DWT features of shape (batch_size, channels, height // (2 ** num_dwt_levels), width // (2 ** num_dwt_levels)).
     """
-    dwt = DWTForward(J=1, wave='haar').to(device)
-    ll = latent
-    for _ in range(num_dwt_levels):
-        ll, (lh, hl, hh) = dwt(ll)
-        ll = ll.to(device)
-        lh = lh.to(device)
-        hl = hl.to(device)
-        hh = hh.to(device)
-    
+    dwt = DWTForward(J=num_dwt_levels, wave='haar', mode='zero').to(device)
+    ll, _ = dwt(latent)
     return ll
 
 
@@ -154,8 +147,8 @@ def main(args):
     # Setup feature folder only from rank 0
     if rank == 0:
         os.makedirs(args.features_path, exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_{num_dwt_levels}_dwt_features'), exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_{num_dwt_levels}_dwt_labels'), exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_features'), exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_labels'), exist_ok=True)
 
     # Create model
     assert args.image_size % 8 == 0, "Image size must be divisible by 8."
