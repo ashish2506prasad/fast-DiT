@@ -180,8 +180,8 @@ def main(args):
         features_dir = f"{args.feature_path}/imagenet256_features/imagenet256_features"
         labels_dir = f"{args.feature_path}/imagenet256_labels/imagenet256_labels"
     else:
-        features_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_features"
-        labels_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_labels"
+        features_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_features/imagenet256_{args.num_dwt_levels}_dwt_features"
+        labels_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_labels/imagenet256_{args.num_dwt_levels}_dwt_labels"
     dataset = CustomDataset(features_dir, labels_dir)
     loader = DataLoader(
         dataset,
