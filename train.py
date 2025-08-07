@@ -289,8 +289,13 @@ def main(args):
                             print("performing IDWT")
                             idwt = DWTInverse(wave='haar', mode='zero').to(device)
                             for _ in range(args.num_dwt_levels):
-                                dummy_high_frequency = torch.zeros(samples.shape[0], samples.shape[1], 3, samples.shape[2], samples.shape[3])
+                                dummy_high_frequency = torch.zeros(
+                                                                    samples.shape[0], samples.shape[1], 3, 
+                                                                    samples.shape[2], samples.shape[3], 
+                                                                    device=samples.device  # Add this line to ensure same device
+                                                                )
                                 samples = idwt((samples, [dummy_high_frequency]))
+                                
                         samples = vae_.decode(samples / 0.18215).sample
 
                         # Save and display images:
