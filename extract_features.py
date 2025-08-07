@@ -184,7 +184,10 @@ def main(args):
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
+            # encode using VAE, then multiply with 0.18215 and then perform wavelet transform on it
             x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            # find the shape of the latent representation
+            # for dwt we need to know the number of batch, channels, height and width
             x = extract_dwt_features(x, num_dwt_levels=num_dwt_levels, device=device)
         x = x.detach().cpu().numpy()
         y = y.detach().cpu().numpy()

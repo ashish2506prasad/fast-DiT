@@ -34,6 +34,7 @@ from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 from sample import sample_main
+from pytorch_wavelets import DWTForward, DWTInverse
 
 
 #################################################################################
@@ -153,7 +154,11 @@ def main(args):
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // 8
+    if args.num_dwt_levels is None:
+        latent_size = args.image_size // 8
+    else:
+        latent_size = args.image_size // (8 * (2 ** args.num_dwt_levels))
+
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
@@ -171,8 +176,12 @@ def main(args):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     # Setup data:
-    features_dir = f"{args.feature_path}/imagenet256_features/imagenet256_features"
-    labels_dir = f"{args.feature_path}/imagenet256_labels/imagenet256_labels"
+    if args.num_dwt_levels is None:
+        features_dir = f"{args.feature_path}/imagenet256_features/imagenet256_features"
+        labels_dir = f"{args.feature_path}/imagenet256_labels/imagenet256_labels"
+    else:
+        features_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_features"
+        labels_dir = f"{args.feature_path}/imagenet256_{args.num_dwt_levels}_dwt_labels"
     dataset = CustomDataset(features_dir, labels_dir)
     loader = DataLoader(
         dataset,
@@ -274,6 +283,13 @@ def main(args):
                         )
                         print("sampled images")
                         samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                        if args.num_dwt_levels is not None:
+                            # perform IDWT, then divide by 0.18215 and decode using VAE
+                            print("performing IDWT")
+                            idwt = DWTInverse(wave='haar', mode='zero').to(device)
+                            for _ in range(args.num_dwt_levels):
+                                dummy_high_frequency = torch.zeros(samples.shape[0], samples.shape[1], 3, samples.shape[2], samples.shape[3])
+                                samples = idwt((samples, [dummy_high_frequency]))
                         samples = vae_.decode(samples / 0.18215).sample
 
                         # Save and display images:
@@ -321,16 +337,17 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=700)
     parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
     parser.add_argument("--save-img-after", type=int, default=30)  # set to -1 to disable image saving during training
+    parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
 
     import os
     import re
     
-    def get_latest_checkpoint(path='.'):
-        ckpts = [f for f in os.listdir(path) if f.startswith('checkpoint_step_')]
-        if not ckpts:
-            return None
-        ckpts = sorted(ckpts, key=lambda x: int(re.findall(r'\d+', x)[-1]))
-        return os.path.join(path, ckpts[-1])
+    # def get_latest_checkpoint(path='.'):
+    #     ckpts = [f for f in os.listdir(path) if f.startswith('checkpoint_step_')]
+    #     if not ckpts:
+    #         return None
+    #     ckpts = sorted(ckpts, key=lambda x: int(re.findall(r'\d+', x)[-1]))
+    #     return os.path.join(path, ckpts[-1])
 
     main(args)

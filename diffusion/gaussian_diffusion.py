@@ -11,6 +11,7 @@ import torch as th
 import enum
 import json
 import os
+from pytorch_wavelets import DWTForward, DWTInverse
 
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
 
@@ -163,7 +164,7 @@ class GaussianDiffusion:
 
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
-        self.loss_type = loss_type
+        self.loss_type = loss_type 
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -757,10 +758,17 @@ class GaussianDiffusion:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
+
+        # Sample the noisy version of x_start at time t.
+        # x_t and x_start are in frequency domain if num_dwt_levels is not None.
         x_t = self.q_sample(x_start, t, noise=noise)
 
-        terms = {}
+        # default settings given below:
+        # loss type = MSE 
+        # model_mean_type = EPSILON      # model predicts noise
+        # model_var_type = LEARNED_RANGE # model learns the variance range
 
+        terms = {}
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
@@ -773,6 +781,7 @@ class GaussianDiffusion:
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
+            # if num_dwt_levels is not none then the output will be the ll feature of dwt of x_t+1
             model_output = model(x_t, t, **model_kwargs)
 
             if self.model_var_type in [
@@ -784,6 +793,16 @@ class GaussianDiffusion:
                 model_output, model_var_values = th.split(model_output, C, dim=1)
                 # Learn the variance using the variational bound, but don't let
                 # it affect our mean prediction.
+                
+                # perform idwt on the model output to again bring it to the image domain
+                # if num_dwt_levels is not None:
+                #     device = x_t.device
+                #     idwt = DWTInverse(wave='haar', mode='zero').to(device)
+                #     samples = model_output
+                #     for _ in range(num_dwt_levels):
+                #         dummy_high_frequency = th.zeros(samples.shape[0], samples.shape[1], 3, samples.shape[2], samples.shape[3])
+                #         samples = idwt((samples, [dummy_high_frequency]))
+
                 frozen_out = th.cat([model_output.detach(), model_var_values], dim=1)
                 terms["vb"] = self._vb_terms_bpd(
                     model=lambda *args, r=frozen_out: r,
