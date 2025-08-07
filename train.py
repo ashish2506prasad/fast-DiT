@@ -283,6 +283,7 @@ def main(args):
                         )
                         print("sampled images")
                         samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                        print(samples.shape)
                         if args.num_dwt_levels is not None:
                             # perform IDWT, then divide by 0.18215 and decode using VAE
                             print("performing IDWT")
