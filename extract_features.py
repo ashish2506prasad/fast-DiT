@@ -121,148 +121,83 @@ def extract_dwt_features(latent, num_dwt_levels=1, device='cpu'):
     ll, _ = dwt(latent)
     return ll
 
-class TinyImageNetDataset(Dataset):
-        def __init__(self, root_dir, transform=None):
-            """
-            Args:
-                root_dir (string): Directory with all the class folders (e.g., n01443537, n01641577, etc.)
-                transform (callable, optional): Optional transform to be applied on a sample.
-            """
-            self.root_dir = root_dir
-            self.transform = transform
-            
-            # Get all class directories
-            self.classes = sorted([d for d in os.listdir(root_dir) 
-                                if os.path.isdir(os.path.join(root_dir, d))])
-            self.class_to_idx = {cls_name: idx for idx, cls_name in enumerate(self.classes)}
-            
-            # Build list of all image paths and their labels
-            self.samples = []
-            for class_name in self.classes:
-                class_dir = os.path.join(root_dir, class_name)
-                images_dir = os.path.join(class_dir, 'images')
-                
-                if os.path.exists(images_dir):
-                    # Get all JPEG files in the images directory
-                    image_files = [f for f in os.listdir(images_dir) 
-                                if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                    
-                    for img_file in image_files:
-                        img_path = os.path.join(images_dir, img_file)
-                        label = self.class_to_idx[class_name]
-                        self.samples.append((img_path, label))
-        
-        def __len__(self):
-            return len(self.samples)
-        
-        def __getitem__(self, idx):
-            img_path, label = self.samples[idx]
-            
-            # Load image
-            image = Image.open(img_path).convert('RGB')
-            
-            # Apply transforms
-            if self.transform:
-                image = self.transform(image)
-                
-            return image, label
-
-
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
 
+# Replace the distributed setup section with this simple fix:
+
 def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
-    # Setup DDP if launched with torch.distributed.launch or torchrun
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        dist.init_process_group(backend="nccl")
-        distributed = True
-    else:
-        distributed = False
-
-    num_dwt_levels = args.num_dwt_levels
-    assert num_dwt_levels >= 0, "Number of DWT levels must be non-negative."
-    world_size = dist.get_world_size() if distributed else 1
-    rank = dist.get_rank() if distributed else 0
-    device = rank % torch.cuda.device_count()
-    seed = args.global_seed * world_size + rank
+    # Force single GPU mode - no distributed processing
+    distributed = False
+    world_size = 1
+    rank = 0
+    device = 0  # Use GPU 0
+    seed = args.global_seed
 
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
+    print(f"Starting single GPU mode: rank={rank}, seed={seed}, world_size={world_size}.")
 
-    # Setup feature folder only from rank 0
-    if rank == 0:
-        os.makedirs(args.features_path, exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_features'), exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_labels'), exist_ok=True)
+    # Setup feature folder
+    os.makedirs(args.features_path, exist_ok=True)
+    os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_features'), exist_ok=True)
+    os.makedirs(os.path.join(args.features_path, f'imagenet256_{num_dwt_levels}_dwt_labels'), exist_ok=True)
 
     # Create model
     assert args.image_size % 8 == 0, "Image size must be divisible by 8."
     latent_size = args.image_size // 8
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
-    # Setup data
+    # Setup data - no distributed sampler
     transform = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5]*3, std=[0.5]*3, inplace=True)
     ])
-    # dataset = ImageFolder(args.data_path, transform=transform)
-    
-        
-    dataset = TinyImageNetDataset(args.data_path, transform=transform)
+    dataset = ImageFolder(args.data_path, transform=transform)
 
-    if distributed:
-        sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=args.global_seed)
-    else:
-        sampler = None
-
+    # Simple DataLoader without distributed sampling
     loader = DataLoader(
         dataset,
-        batch_size=args.global_batch_size // world_size,
-        shuffle=(sampler is None),
-        sampler=sampler,
+        batch_size=args.global_batch_size,  # Use full batch size since no distribution
+        shuffle=True,  # Enable shuffle for better class distribution
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True
     )
 
+    # Rest of your training loop remains the same
     train_steps = 0
     for x, y in loader:
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
-            # encode using VAE, then multiply with 0.18215 and then perform wavelet transform on it
             x = vae.encode(x).latent_dist.sample().mul_(0.18215)
-            # find the shape of the latent representation
-            # for dwt we need to know the number of batch, channels, height and width
             x = extract_dwt_features(x, num_dwt_levels=num_dwt_levels, device=device)
         x = x.detach().cpu().numpy()
         y = y.detach().cpu().numpy()
         
-        # Save each sample in the batch individually to maintain file structure
-        for i in range(x.shape[0]): # x.shape = (batch_size, channels, height, width)
+        for i in range(x.shape[0]):
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/{train_steps}.npy', x[i:i+1])
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/{train_steps}.npy', y[i:i+1])
-            print(y[i:i+1])
             train_steps += 1
         
-        if train_steps % 100 == 0:  # Print less frequently
+        if train_steps % 100 == 0:
             print(f"Processed {train_steps} samples")
 
-    # save a zip file of the features and labels
-    if rank == 0:
-        import zipfile
-        with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features.zip', 'w') as zipf:
-            for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/*.npy'):
-                zipf.write(file, os.path.relpath(file, args.features_path))
-        with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels.zip', 'w') as zipf:
-            for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/*.npy'):
-                zipf.write(file, os.path.relpath(file, args.features_path))
+    # Save zip files
+    import zipfile
+    with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features.zip', 'w') as zipf:
+        for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/*.npy'):
+            zipf.write(file, os.path.relpath(file, args.features_path))
+    with zipfile.ZipFile(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels.zip', 'w') as zipf:
+        for file in glob(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/*.npy'):
+            zipf.write(file, os.path.relpath(file, args.features_path))
+    
     print(f"Finished processing {train_steps} samples.")
     
     
@@ -276,7 +211,7 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--num-classes", type=int, default=20)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=10)
     parser.add_argument("--global-seed", type=int, default=0)
