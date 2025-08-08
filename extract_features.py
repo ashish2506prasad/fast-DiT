@@ -185,6 +185,7 @@ def main(args):
         for i in range(x.shape[0]):
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/{train_steps}.npy', x[i:i+1])
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/{train_steps}.npy', y[i:i+1])
+            print(y[i:i+1])
             train_steps += 1
         
         if train_steps % 100 == 0:
