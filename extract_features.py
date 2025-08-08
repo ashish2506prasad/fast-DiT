@@ -30,6 +30,9 @@ from pytorch_wavelets import DWTForward, DWTInverse
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
+import os
+from torch.utils.data import Dataset
+from PIL import Image
 
 
 #################################################################################
@@ -118,6 +121,52 @@ def extract_dwt_features(latent, num_dwt_levels=1, device='cpu'):
     ll, _ = dwt(latent)
     return ll
 
+class TinyImageNetDataset(Dataset):
+        def __init__(self, root_dir, transform=None):
+            """
+            Args:
+                root_dir (string): Directory with all the class folders (e.g., n01443537, n01641577, etc.)
+                transform (callable, optional): Optional transform to be applied on a sample.
+            """
+            self.root_dir = root_dir
+            self.transform = transform
+            
+            # Get all class directories
+            self.classes = sorted([d for d in os.listdir(root_dir) 
+                                if os.path.isdir(os.path.join(root_dir, d))])
+            self.class_to_idx = {cls_name: idx for idx, cls_name in enumerate(self.classes)}
+            
+            # Build list of all image paths and their labels
+            self.samples = []
+            for class_name in self.classes:
+                class_dir = os.path.join(root_dir, class_name)
+                images_dir = os.path.join(class_dir, 'images')
+                
+                if os.path.exists(images_dir):
+                    # Get all JPEG files in the images directory
+                    image_files = [f for f in os.listdir(images_dir) 
+                                if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                    
+                    for img_file in image_files:
+                        img_path = os.path.join(images_dir, img_file)
+                        label = self.class_to_idx[class_name]
+                        self.samples.append((img_path, label))
+        
+        def __len__(self):
+            return len(self.samples)
+        
+        def __getitem__(self, idx):
+            img_path, label = self.samples[idx]
+            
+            # Load image
+            image = Image.open(img_path).convert('RGB')
+            
+            # Apply transforms
+            if self.transform:
+                image = self.transform(image)
+                
+            return image, label
+
 
 #################################################################################
 #                                  Training Loop                                #
@@ -162,7 +211,10 @@ def main(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5]*3, std=[0.5]*3, inplace=True)
     ])
-    dataset = ImageFolder(args.data_path, transform=transform)
+    # dataset = ImageFolder(args.data_path, transform=transform)
+    
+        
+    dataset = TinyImageNetDataset(args.data_path, transform=transform)
 
     if distributed:
         sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=args.global_seed)
@@ -196,6 +248,7 @@ def main(args):
         for i in range(x.shape[0]): # x.shape = (batch_size, channels, height, width)
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_features/{train_steps}.npy', x[i:i+1])
             np.save(f'{args.features_path}/imagenet256_{num_dwt_levels}_dwt_labels/{train_steps}.npy', y[i:i+1])
+            print(y[i:i+1])
             train_steps += 1
         
         if train_steps % 100 == 0:  # Print less frequently
