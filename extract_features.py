@@ -136,6 +136,7 @@ def main(args):
     rank = 0
     device = 0  # Use GPU 0
     seed = args.global_seed
+    num_dwt_levels = args.num_dwt_levels
 
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
