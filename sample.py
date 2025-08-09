@@ -123,7 +123,7 @@ def sample_main(args):
         assert args.num_classes == 1000
 
     # Load model:
-    latent_size = args.image_size // 8
+    latent_size = args.image_size // (8 * 2**args.num_dwt_levels) if args.num_dwt_levels is not None else args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
