@@ -148,7 +148,7 @@ def sample_main(args):
 
     # Setup classifier-free guidance:
     z = torch.cat([z, z], 0)
-    y_null = torch.tensor([1000] * n, device=device)
+    y_null = torch.tensor([args.num_classes] * n, device=device)
     y = torch.cat([y, y_null], 0)
     model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
 
