@@ -177,10 +177,10 @@ def sample_main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="DiT-XL/2")
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=200)
+    parser.add_argument("--num-classes", type=int, default=20)
     parser.add_argument("--cfg-scale", type=float, default=4.0)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--seed", type=int, default=0)
@@ -190,4 +190,5 @@ if __name__ == "__main__":
     parser.add_argument("--class-labels", type=int, default=None)
     parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
+    print(DiT_models.keys())
     sample_main(args)
