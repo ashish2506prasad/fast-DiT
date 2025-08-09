@@ -264,43 +264,45 @@ def main(args):
                         print("created diffusion")
                         vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
                         # Labels to condition the model with (feel free to change):
-                        class_labels = [15]
+                        for class_label in range(1, 19, 3):
+                            class_labels = [class_label]  # Change this to sample different classes
+                            print(f"Sampling images for class {class_labels[0]} at step {train_steps}")
 
-                        n = len(class_labels)
-                        z = torch.randn(n, 4, latent_size, latent_size, device=device)
-                        y = torch.tensor(class_labels, device=device)
+                            n = len(class_labels)
+                            z = torch.randn(n, 4, latent_size, latent_size, device=device)
+                            y = torch.tensor(class_labels, device=device)
 
-                        # Setup classifier-free guidance:
-                        z = torch.cat([z, z], 0)
-                        y_null = torch.tensor([20] * n, device=device)
-                        y = torch.cat([y, y_null], 0)
-                        model_kwargs_ = dict(y=y)
+                            # Setup classifier-free guidance:
+                            z = torch.cat([z, z], 0)
+                            y_null = torch.tensor([args.num_classes] * n, device=device)
+                            y = torch.cat([y, y_null], 0)
+                            model_kwargs_ = dict(y=y)
 
-                        # Sample images:
-                        samples = diffusion.p_sample_loop(
-                            model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
-                            save_timestep_output=True, class_gen=class_labels[0], train_step=train_steps
-                        )
-                        print("sampled images")
-                        samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-                        print(samples.shape)
-                        if args.num_dwt_levels is not None:
-                            # perform IDWT, then divide by 0.18215 and decode using VAE
-                            print("performing IDWT")
-                            idwt = DWTInverse(wave='haar', mode='zero').to(device)
-                            for _ in range(args.num_dwt_levels):
-                                dummy_high_frequency = torch.zeros(
-                                                                    samples.shape[0], samples.shape[1], 3, 
-                                                                    samples.shape[2], samples.shape[3], 
-                                                                    device=samples.device  # Add this line to ensure same device
-                                                                )
-                                samples = idwt((samples, [dummy_high_frequency]))
-                                
-                        samples = vae_.decode(samples / 0.18215).sample
+                            # Sample images:
+                            samples = diffusion.p_sample_loop(
+                                model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs_, progress=True, device=device,
+                                save_timestep_output=args.save_timestep_images, class_gen=class_labels[0], train_step=train_steps
+                            )
+                            print("sampled images")
+                            samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+                            print(samples.shape)
+                            if args.num_dwt_levels is not None:
+                                # perform IDWT, then divide by 0.18215 and decode using VAE
+                                print("performing IDWT")
+                                idwt = DWTInverse(wave='haar', mode='zero').to(device)
+                                for _ in range(args.num_dwt_levels):
+                                    dummy_high_frequency = torch.zeros(
+                                                                        samples.shape[0], samples.shape[1], 3, 
+                                                                        samples.shape[2], samples.shape[3], 
+                                                                        device=samples.device  # Add this line to ensure same device
+                                                                    )
+                                    samples = idwt((samples, [dummy_high_frequency]))
+                                    
+                            samples = vae_.decode(samples / 0.18215).sample
+                            # Save and display images:
+                            # save image like 000001 etc in 7 digit numbers
+                            save_image(samples, f"training_image_generation/class_{class_label}/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
 
-                        # Save and display images:
-                        # save image like 000001 etc in 7 digit numbers
-                        save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
                         import zipfile
                         with zipfile.ZipFile('training_image_generation.zip', 'w') as zipf:
                             for file in glob(f'training_image_generation/*.png'):
@@ -346,7 +348,8 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=700)
     parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
-    parser.add_argument("--save-img-after", type=int, default=30)  # set to -1 to disable image saving during training
+    parser.add_argument("--save-img-after", type=int, default=50)  # set to -1 to disable image saving during training
+    parser.add_argument("--save-timestep-images", type=False, default=False, help="Save images at each timestep during sampling.")
     parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
 
@@ -375,4 +378,4 @@ if __name__ == "__main__":
 
     # save the zip of resulter folder and debug_outputs folder
     zip_folder("./results", "./results.zip")
-    zip_folder("./debug_outputs", "./debug_outputs.zip")
+    # zip_folder("./debug_outputs", "./debug_outputs.zip")

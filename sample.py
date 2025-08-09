@@ -169,6 +169,7 @@ def sample_main(args):
                                                 device=samples.device  # Add this line to ensure same device
                                             )
             samples = idwt((samples, [dummy_high_frequency]))
+            
     samples = vae.decode(samples / 0.18215).sample
 
     # Save and display images:
