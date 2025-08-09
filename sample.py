@@ -108,6 +108,7 @@ from models import DiT_models
 import argparse
 import os
 import json
+from pytorch_wavelets import DWTInverse, DWTForward
 
 
 def sample_main(args):
@@ -157,6 +158,17 @@ def sample_main(args):
         save_timestep_output=args.save_timestep_images, class_gen=args.class_labels
     )
     samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+    if args.num_dwt_levels is not None:
+        # perform IDWT, then divide by 0.18215 and decode using VAE
+        print("performing IDWT")
+        idwt = DWTInverse(wave='haar', mode='zero').to(device)
+        for _ in range(args.num_dwt_levels):
+            dummy_high_frequency = torch.zeros(
+                                                samples.shape[0], samples.shape[1], 3, 
+                                                samples.shape[2], samples.shape[3], 
+                                                device=samples.device  # Add this line to ensure same device
+                                            )
+            samples = idwt((samples, [dummy_high_frequency]))
     samples = vae.decode(samples / 0.18215).sample
 
     # Save and display images:
@@ -176,5 +188,6 @@ if __name__ == "__main__":
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
     parser.add_argument("--save-timestep-images",type=bool, default=False)
     parser.add_argument("--class-labels", type=int, default=None)
+    parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
     sample_main(args)
