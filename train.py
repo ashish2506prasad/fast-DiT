@@ -301,6 +301,10 @@ def main(args):
                         # Save and display images:
                         # save image like 000001 etc in 7 digit numbers
                         save_image(samples, f"training_image_generation/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
+                        import zipfile
+                        with zipfile.ZipFile('training_image_generation.zip', 'w') as zipf:
+                            for file in glob(f'training_image_generation/*.png'):
+                                zipf.write(file, os.path.relpath(file, args.features_path))
                 model.train()
                 torch.set_grad_enabled(True)
 
@@ -347,8 +351,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     import os
-    import re
-    
+    import zipfile
+
+    def zip_folder(folder_path, output_path):
+        # Create a ZipFile object in write mode
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(folder_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Store relative path to preserve folder structure
+                    arcname = os.path.relpath(file_path, folder_path)
+                    zipf.write(file_path, arcname)
+
+    # Example usage    
     # def get_latest_checkpoint(path='.'):
     #     ckpts = [f for f in os.listdir(path) if f.startswith('checkpoint_step_')]
     #     if not ckpts:
@@ -357,3 +372,7 @@ if __name__ == "__main__":
     #     return os.path.join(path, ckpts[-1])
 
     main(args)
+
+    # save the zip of resulter folder and debug_outputs folder
+    zip_folder("./results", "./results.zip")
+    zip_folder("./debug_outputs", "./debug_outputs.zip")
