@@ -299,6 +299,7 @@ def main(args):
                                     samples = idwt((samples, [dummy_high_frequency]))
                                     
                             samples = vae_.decode(samples / 0.18215).sample
+                            print("shape of samples after decoding:", samples.shape)
                             # Save and display images:
                             # save image like 000001 etc in 7 digit numbers
                             save_image(samples, f"training_image_generation/class_{class_label}/sample_{class_labels[0]}_{train_steps:8d}.png", nrow=4, normalize=True, value_range=(-1, 1))
