@@ -350,7 +350,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=700)
     parser.add_argument("--token-mixer", type=str, default="softmax", choices=["linformer", "nystromformer", "performer", "softmax"])
     parser.add_argument("--save-img-after", type=int, default=50)  # set to -1 to disable image saving during training
-    parser.add_argument("--save-timestep-images", type=False, default=False, help="Save images at each timestep during sampling.")
+    parser.add_argument("--save-timestep-images", type=bool, default=False, help="Save images at each timestep during sampling.")
     parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     args = parser.parse_args()
 
