@@ -259,12 +259,13 @@ def main(args):
                         # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
                         assert args.image_size in [256, 512]
                         # assert args.num_classes == 1000
-                        num_sampling_steps=200
+                        num_sampling_steps=300
                         diffusion = create_diffusion(str(num_sampling_steps))
                         print("created diffusion")
                         vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
                         # Labels to condition the model with (feel free to change):
                         for class_label in range(1, 19, 3):
+                            os.makedirs(f"training_image_generation/class_{class_label}", exist_ok=True)
                             class_labels = [class_label]  # Change this to sample different classes
                             print(f"Sampling images for class {class_labels[0]} at step {train_steps}")
 
@@ -306,7 +307,7 @@ def main(args):
 
                         import zipfile
                         with zipfile.ZipFile('training_image_generation.zip', 'w') as zipf:
-                            for file in glob(f'training_image_generation/*.png'):
+                            for file in glob(f'training_image_generation/*/*.png'):
                                 zipf.write(file, os.path.relpath(file, args.features_path))
                 model.train()
                 torch.set_grad_enabled(True)
@@ -352,6 +353,7 @@ if __name__ == "__main__":
     parser.add_argument("--save-img-after", type=int, default=50)  # set to -1 to disable image saving during training
     parser.add_argument("--save-timestep-images", type=bool, default=False, help="Save images at each timestep during sampling.")
     parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
+    parser.add_argument("--ckpt-path", type=str, default=None,)
     args = parser.parse_args()
 
     import os
@@ -366,14 +368,6 @@ if __name__ == "__main__":
                     # Store relative path to preserve folder structure
                     arcname = os.path.relpath(file_path, folder_path)
                     zipf.write(file_path, arcname)
-
-    # Example usage    
-    # def get_latest_checkpoint(path='.'):
-    #     ckpts = [f for f in os.listdir(path) if f.startswith('checkpoint_step_')]
-    #     if not ckpts:
-    #         return None
-    #     ckpts = sorted(ckpts, key=lambda x: int(re.findall(r'\d+', x)[-1]))
-    #     return os.path.join(path, ckpts[-1])
 
     main(args)
 
