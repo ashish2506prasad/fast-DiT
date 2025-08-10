@@ -206,13 +206,13 @@ def main(args):
     running_loss = 0
     start_time = time()
     if accelerator.is_main_process:
-        logger.info(f"Training for {args.epochs} epochs...")
+        # logger.info(f"Training for {args.epochs} epochs...")
         print(f"Training for {args.epochs} epochs...")
     loss_list = []
     epoch = 0
     for epoch in range(args.epochs):
         if accelerator.is_main_process:
-            logger.info(f"Beginning epoch {epoch}...")
+            # logger.info(f"Beginning epoch {epoch}...")
             print(f"Beginning epoch {epoch}...")
         for x, y in loader:
             x = x.to(device)
@@ -241,7 +241,7 @@ def main(args):
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 avg_loss = avg_loss.item() / accelerator.num_processes
                 if accelerator.is_main_process:
-                    logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
+                    # logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                     print(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                 # Reset monitoring variables:
                 running_loss = 0
@@ -308,7 +308,7 @@ def main(args):
                         import zipfile
                         with zipfile.ZipFile('training_image_generation.zip', 'w') as zipf:
                             for file in glob(f'training_image_generation/*/*.png'):
-                                zipf.write(file, os.path.relpath(file, args.features_path))
+                                zipf.write(file, os.path.relpath(file, 'training_image_generation'))
                 model.train()
                 torch.set_grad_enabled(True)
 
