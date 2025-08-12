@@ -176,7 +176,7 @@ def main(args):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     # Setup data:
-    if args.num_dwt_levels is None:
+    if args.num_dwt_levels is None or args.num_dwt_levels == 0:
         features_dir = f"{args.feature_path}/imagenet256_features/imagenet256_features"
         labels_dir = f"{args.feature_path}/imagenet256_labels/imagenet256_labels"
     else:
