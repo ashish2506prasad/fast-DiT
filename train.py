@@ -264,7 +264,7 @@ def main(args):
                         print("created diffusion")
                         vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
                         # Labels to condition the model with (feel free to change):
-                        for class_label in range(1, 19, 3):
+                        for class_label in range(1, 19, 4):
                             os.makedirs(f"training_image_generation/class_{class_label}", exist_ok=True)
                             class_labels = [class_label]  # Change this to sample different classes
                             print(f"Sampling images for class {class_labels[0]} at step {train_steps}")
