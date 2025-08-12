@@ -167,7 +167,7 @@ def main(args):
     model = model.to(device)
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
-    diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", diffusion_steps=args.num_sampling_steps)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     if accelerator.is_main_process:
         logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -259,7 +259,7 @@ def main(args):
                         # assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
                         assert args.image_size in [256, 512]
                         # assert args.num_classes == 1000
-                        num_sampling_steps=300
+                        num_sampling_steps=args.num_sampling_steps
                         diffusion = create_diffusion(str(num_sampling_steps))
                         print("created diffusion")
                         vae_ = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
@@ -354,6 +354,7 @@ if __name__ == "__main__":
     parser.add_argument("--save-timestep-images", type=bool, default=False, help="Save images at each timestep during sampling.")
     parser.add_argument("--num-dwt-levels", type=int, default=None, help="Number of DWT levels to use for feature extraction.")
     parser.add_argument("--ckpt-path", type=str, default=None,)
+    parser.add_argument("--num-sampling-steps", type=int, default=300, help="Number of sampling steps for the diffusion model.")
     args = parser.parse_args()
 
     import os
