@@ -23,6 +23,7 @@ from PIL import Image
 import numpy as np
 import math
 import argparse
+from pytorch_wavelets import DWTInverse, DWTForward
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -51,7 +52,8 @@ def main(args):
     torch.set_grad_enabled(False)
 
     # Setup DDP:
-    dist.init_process_group("nccl")
+    # dist.init_process_group("nccl")
+    dist.init_process_group("gloo", rank=0, world_size=1)
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
     seed = args.global_seed * dist.get_world_size() + rank
@@ -65,7 +67,7 @@ def main(args):
         assert args.num_classes == 1000
 
     # Load model:
-    latent_size = args.image_size // 8
+    latent_size = args.image_size // (8 * 2**args.num_dwt_levels) if args.num_dwt_levels is not None else args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
@@ -127,7 +129,14 @@ def main(args):
         )
         if using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-
+        idwt = DWTInverse(wave='haar', mode='zero').to(device)
+        for _ in range(args.num_dwt_levels):
+            dummy_high_frequency = torch.zeros(
+                                                samples.shape[0], samples.shape[1], 3, 
+                                                samples.shape[2], samples.shape[3], 
+                                                device=samples.device  # Add this line to ensure same device
+                                            )
+            samples = idwt((samples, [dummy_high_frequency]))
         samples = vae.decode(samples / 0.18215).sample
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
@@ -162,5 +171,6 @@ if __name__ == "__main__":
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
+    parser.add_argument("--num-dwt-levels", type=int, default=1)
     args = parser.parse_args()
     main(args)

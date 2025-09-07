@@ -742,7 +742,7 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
-    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, num_dwt_levels = None, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep.
         :param model: the model to evaluate loss on.
@@ -762,6 +762,21 @@ class GaussianDiffusion:
         # Sample the noisy version of x_start at time t.
         # x_t and x_start are in frequency domain if num_dwt_levels is not None.
         x_t = self.q_sample(x_start, t, noise=noise)
+        
+        # i also want to compare the latent and the LL of the latent formed
+        # perform IDWT on the x_start to bring it back to the image domain
+        # if num_dwt_levels is not None:
+        #     device = x_t.device
+        #     idwt = DWTInverse(wave='haar', mode='zero').to(device)
+        #     for _ in range(num_dwt_levels):
+        #         dummy_high_frequency = th.zeros(x_start.shape[0], 
+        #                                         x_start.shape[1], 
+        #                                         3, 
+        #                                         x_start.shape[2], 
+        #                                         x_start.shape[3], 
+        #                                         device=samples.device  # Add this line to ensure same device
+        #                                         )
+        #         samples = idwt((x_start, [dummy_high_frequency]))
 
         # default settings given below:
         # loss type = MSE 
@@ -793,15 +808,6 @@ class GaussianDiffusion:
                 model_output, model_var_values = th.split(model_output, C, dim=1)
                 # Learn the variance using the variational bound, but don't let
                 # it affect our mean prediction.
-                
-                # perform idwt on the model output to again bring it to the image domain
-                # if num_dwt_levels is not None:
-                #     device = x_t.device
-                #     idwt = DWTInverse(wave='haar', mode='zero').to(device)
-                #     samples = model_output
-                #     for _ in range(num_dwt_levels):
-                #         dummy_high_frequency = th.zeros(samples.shape[0], samples.shape[1], 3, samples.shape[2], samples.shape[3])
-                #         samples = idwt((samples, [dummy_high_frequency]))
 
                 frozen_out = th.cat([model_output.detach(), model_var_values], dim=1)
                 terms["vb"] = self._vb_terms_bpd(
@@ -907,6 +913,7 @@ class GaussianDiffusion:
 
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):
+
     """
     Extract values from a 1-D numpy array for a batch of indices.
     :param arr: the 1-D numpy array.
