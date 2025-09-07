@@ -418,6 +418,7 @@ def eval(args):
             # Final reconstruction
             # print("***********chkpt 5",ll.shape, latent.shape)
             final_reconstruction_error.append(nn.MSELoss()(ll, latent).item())
+            print(f"Image {idx}, DWT Levels {num_dwt_levels}, High-Freq MSE: {error.item():.6f}, Final Recon MSE: {final_reconstruction_error[-1]:.6f}")
             
             # save the final reconstruction
             if args.use_latent:
