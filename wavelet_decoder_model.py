@@ -311,7 +311,7 @@ def main(args):
         batch_size=args.global_batch_size,  # Use full batch size since no distribution
         shuffle=True,  # Enable shuffle for better class distribution
         sampler=sampler,
-        num_workers=args.num_workrs,  # Fixed: Set to 0 for Windows compatibility
+        num_workers=args.num_workers,  
         pin_memory=True,
         drop_last=True
     )
