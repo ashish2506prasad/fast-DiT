@@ -285,11 +285,13 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
     os.makedirs(args.results_dir, exist_ok=True)
 
-    # Force single GPU mode - no distributed processing
-    distributed = False
-    world_size = 1
-    rank = 0
-    device = 0  # Use GPU 0
+    # Initialize distributed training
+    dist.init_process_group(backend='nccl')
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = rank
+    torch.cuda.set_device(device)
+    distributed = True
     num_dwt_levels = args.num_dwt_levels
 
     loss_list = []
@@ -303,23 +305,25 @@ def main(args):
     # Fixed: Pass image_size parameter to CustomDataset
     dataset = CustomDataset(args.data_path, split='train', image_size=args.image_size)
 
-    # Simple DataLoader - Fixed: Set num_workers=0 to avoid multiprocessing issues on Windows
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
     loader = DataLoader(
         dataset,
         batch_size=args.global_batch_size,  # Use full batch size since no distribution
         shuffle=True,  # Enable shuffle for better class distribution
-        num_workers=0,  # Fixed: Set to 0 for Windows compatibility
+        sampler=sampler,
+        num_workers=args.num_workrs,  # Fixed: Set to 0 for Windows compatibility
         pin_memory=True,
         drop_last=True
     )
     
     # Fixed: Use proper in_chanel parameter
     wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3).to(device)
-    # wavelet_docoder_model = DDP(wavelet_docoder_model, device_ids=[device])
+    wavelet_docoder_model = DDP(wavelet_docoder_model, device_ids=[device])
     optimizer = torch.optim.AdamW(wavelet_docoder_model.parameters(), lr=1e-4, weight_decay=1e-2)
     logger = create_logger(args.results_dir)
     
     for epoch in range(args.epochs):
+        sampler.set_epoch(epoch)
         for step, image in enumerate(loader):
             optimizer.zero_grad()
             start_time = time()
@@ -343,14 +347,15 @@ def main(args):
             if step % args.log_every == 0:
                 logger.info(f"Epoch {epoch}, step {step}, loss {loss.item():.4f}, time {time() - start_time:.2f}s")
         
-        if epoch % args.ckpt_every == 0:
+        if epoch % args.ckpt_every == 0 and rank == 0:
             # Fixed: Save model state dict properly without DDP wrapper
-            torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
+            torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
     
     # Fixed: Save final model without DDP wrapper
-    torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth")
-    with open(f"{args.results_dir}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
-        json.dump(loss_list, f)
+    if rank == 0:
+        torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth")
+        with open(f"{args.results_dir}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
+            json.dump(loss_list, f)
 
 def eval(args):
     device = 0
@@ -448,19 +453,21 @@ if __name__ == "__main__":
     parser.add_argument("--ood-eval", type=str, default=None)
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--res-depth", type=int, default=5)
+    parser.add_argument("--num-workers", type=float, default=2)
     args = parser.parse_args()
     
     main(args)
-    eval(args)
-
-    # Add this at the very end of the main() function
-    import zipfile
-    import shutil
-
-    def create_zip_archive(source_dir, output_filename):
-        shutil.make_archive(output_filename.replace('.zip', ''), 'zip', source_dir)
-
-    # Create zip file
-    zip_filename = f"{args.results_dir}_training_results.zip"
-    create_zip_archive(args.results_dir, zip_filename)
-    print(f"Results saved and zipped to: {zip_filename}")
+    if dist.get_rank() == 0:  # Only evaluate on rank 0
+        eval(args)
+        
+        # Create zip file
+        import zipfile
+        import shutil
+        def create_zip_archive(source_dir, output_filename):
+            shutil.make_archive(output_filename.replace('.zip', ''), 'zip', source_dir)
+        
+        zip_filename = f"{args.results_dir}_training_results.zip"
+        create_zip_archive(args.results_dir, zip_filename)
+        print(f"Results saved and zipped to: {zip_filename}")
+    
+    cleanup()  
