@@ -317,7 +317,7 @@ def main(args):
     )
     
     # Fixed: Use proper in_chanel parameter
-    wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3).to(device)
+    wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3, res_depth=5).to(device)
     wavelet_docoder_model = DDP(wavelet_docoder_model, device_ids=[device])
     optimizer = torch.optim.AdamW(wavelet_docoder_model.parameters(), lr=1e-4, weight_decay=1e-2)
     logger = create_logger(args.results_dir)
@@ -350,6 +350,7 @@ def main(args):
         if epoch % args.ckpt_every == 0 and rank == 0:
             # Fixed: Save model state dict properly without DDP wrapper
             torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
+            logger.info(f"Saved checkpoint at epoch {epoch} in time {time() - start_time:.2f}s")
     
     # Fixed: Save final model without DDP wrapper
     if rank == 0:
@@ -357,17 +358,17 @@ def main(args):
         with open(f"{args.results_dir}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
             json.dump(loss_list, f)
 
+        logger.info("Training complete.")
+
 def eval(args):
     device = 0
     num_dwt_levels = args.num_dwt_levels
-    wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3).to(device)
+    wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3, res_depth=5).to(device)
     # Fixed: Load state dict without DDP wrapper expectation
     wavelet_docoder_model.load_state_dict(torch.load(f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth", map_location='cpu'))
     wavelet_docoder_model.eval()
 
     if args.use_latent:
-        # assert args.image_size % 8 == 0, "Image size must be divisible by 8."
-        # latent_size = args.image_size // 8
         vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     if args.ood_eval:
