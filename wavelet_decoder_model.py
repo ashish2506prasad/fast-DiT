@@ -453,7 +453,7 @@ if __name__ == "__main__":
     parser.add_argument("--ood-eval", type=str, default=None)
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--res-depth", type=int, default=5)
-    parser.add_argument("--num-workers", type=float, default=2)
+    parser.add_argument("--num-workers", type=int, default=2)
     args = parser.parse_args()
     
     main(args)
