@@ -309,7 +309,7 @@ def main(args):
     loader = DataLoader(
         dataset,
         batch_size=args.global_batch_size,  # Use full batch size since no distribution
-        shuffle=True,  # Enable shuffle for better class distribution
+        # shuffle=True,  # Enable shuffle for better class distribution
         sampler=sampler,
         num_workers=args.num_workers,  
         pin_memory=True,
