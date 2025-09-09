@@ -356,7 +356,7 @@ def main(args):
     
     # Fixed: Save final model without DDP wrapper
     if rank == 0:
-        torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth")
+        torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth")
         with open(f"{args.results_dir}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
             json.dump(loss_list, f)
 
