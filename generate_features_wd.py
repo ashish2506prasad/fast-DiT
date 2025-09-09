@@ -131,7 +131,7 @@ class CustomDataset(Dataset):
         class_dirs = sorted([d for d in os.listdir(parent_dir) 
                            if os.path.isdir(os.path.join(parent_dir, d))])
         
-        all_image_paths = []
+        all_image_paths= []
         
         print(f"Processing {len(class_dirs)} classes for {split} split...")
         
@@ -139,10 +139,7 @@ class CustomDataset(Dataset):
         for class_name in class_dirs:
             class_path = os.path.join(parent_dir, class_name)
             # Get all images for this class (both .jpeg and .JPEG)
-            class_images = sorted(glob(f"{class_path}/*/*.jpeg") + 
-                                glob(f"{class_path}/*/*.JPEG") +
-                                glob(f"{class_path}/*/*.jpg") + 
-                                glob(f"{class_path}/*/*.JPG"))
+            class_images = sorted(glob(f"{class_path}/images/*"))
             
             if len(class_images) == 0:
                 print(f"Warning: No images found for class {class_name}")
@@ -253,7 +250,7 @@ def main(args):
         shuffle=True,  # Enable shuffle for better class distribution
         num_workers=args.num_workers,
         pin_memory=True,
-        drop_last=True
+        drop_last=False
     )
     val_loader = DataLoader(
         val_dataset,

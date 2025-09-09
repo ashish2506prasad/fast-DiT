@@ -159,13 +159,11 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
-
 def cleanup():
     """
     End DDP training.
     """
     dist.destroy_process_group()
-
 
 def create_logger(logging_dir):
     """
@@ -189,7 +187,6 @@ def create_logger(logging_dir):
         logger = logging.getLogger(__name__)
     return logger
 
-
 def center_crop_arr(pil_image, image_size):
     """
     Center cropping implementation from ADM.
@@ -209,7 +206,6 @@ def center_crop_arr(pil_image, image_size):
     crop_y = (arr.shape[0] - image_size) // 2
     crop_x = (arr.shape[1] - image_size) // 2
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
-
 
 def extract_dwt_features(latent, num_dwt_levels=1, device='cpu'):
     """
@@ -237,45 +233,54 @@ class CustomDataset(Dataset):
         torch.Tensor: Transformed image tensor.
         does not return class as they are not needed for feature extraction
     """
-    def __init__(self, parent_dir, split='train', train_ratio=0.8, image_size=256):
+    def __init__(self, parent_dir, test_data=None, split='train', feature_type ='image', num_dwt_levels = 1):
         self.parent_dir = parent_dir
         # Fixed: Use parent_dir parameter instead of hardcoded path
-        self.image_paths = sorted(glob(f"{parent_dir}/*/*/*.[Jj][Pp][Ee][Gg]"))  # matches .JPEG/.jpeg
-        print(f"Found {len(self.image_paths)} images in {parent_dir}")
-        
-        # Split data
-        np.random.seed(42)  # For reproducibility
-        indices = np.random.permutation(len(self.image_paths))
-        train_size = int(len(indices) * train_ratio)
-        
-        if split == 'train':
-            self.image_paths = [self.image_paths[i] for i in indices[:train_size]]
-        else:  # 'test'
-            self.image_paths = [self.image_paths[i] for i in indices[train_size:]]
-        
-        # Fixed: Use proper transform classes instead of lambda functions
-        if split == 'train':
-            self.transform = transforms.Compose([
-                CenterCropTransform(image_size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.5]*3, std=[0.5]*3, inplace=True)
-            ])
+        if split in ['train', 'val']:
+            self.image_paths = sorted(glob(f"{parent_dir}/{split}/{feature_type}_{num_dwt_levels}_dwt_LL/*.npy"))
+            self.label_paths = sorted(glob(f"{parent_dir}/{split}/{feature_type}_{num_dwt_levels}_dwt_highfreq/*.npy"))
+            print(f"Found {len(self.image_paths)} images in {split} set")
         else:
-            self.transform = transforms.Compose([
-                CenterCropTransform(image_size),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.5]*3, std=[0.5]*3, inplace=True)
-            ])
+            classes = os.listdir(test_data)
+            self.image_paths = []
+            for class_ in classes:
+                class_path = os.path.join(test_data, class_)
+                sorted_images = sorted(glob(f"{class_path}/*/*.[Jj][Pp][Ee][Gg]"))  # matches .JPEG/.jpeg
+                print(f"Found {len(sorted_images)} images in class {class_}")
+                self.image_paths += sorted_images[int(len(sorted_images)*0.8):]  # Use 20% of images for testing
+            print(f"Found {len(self.image_paths)} images in {split} set ")
     
     def __len__(self):
         return len(self.image_paths)
     
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
-        image = Image.open(img_path).convert("RGB")
-        image = self.transform(image)
-        return image
+        label_path = self.label_paths[idx] if hasattr(self, 'label_paths') else None
+        
+        # Check if this is a test split with image files or train/val split with .npy files
+        if img_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+            # Load image file for test data
+            image = Image.open(img_path).convert('RGB')
+            # Convert to tensor and normalize
+            transform = transforms.Compose([
+                transforms.Resize((256, 256)),  # Adjust size as needed
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
+            ])
+            image = transform(image)
+        else:
+            # Load .npy file for train/val data
+            image = np.load(img_path)
+            image = torch.from_numpy(image).float()
+        
+        if label_path:
+            label = np.load(label_path)
+            label = torch.from_numpy(label).float()
+            return image, label
+        else:
+            # Return a dummy tensor for test data where no labels exist
+            dummy_label = torch.zeros(1)  # Placeholder tensor
+            return image, dummy_label
 
 #################################################################################
 #                                  Training Loop                                #
@@ -283,63 +288,90 @@ class CustomDataset(Dataset):
 
 def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
+    # Add before saving JSON:
+    feature_type = 'latent' if args.use_latent else 'image'
     os.makedirs(args.results_dir, exist_ok=True)
+    os.makedirs(f"{args.results_dir}/{feature_type}", exist_ok=True)
 
-    # Initialize distributed training
-    dist.init_process_group(backend='nccl')
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    device = rank
-    torch.cuda.set_device(device)
-    distributed = True
+    if args.where == "local":
+        # Local single GPU setup
+        distributed = False
+        rank = 0
+        world_size = 1
+        device = 0
+        torch.cuda.set_device(device)
+        print("Running in local single GPU mode")
+    else:
+        # Distributed training setup
+        dist.init_process_group(backend='nccl')
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        device = rank
+        torch.cuda.set_device(device)
+        distributed = True
+        print(f"Running in distributed mode: rank={rank}, world_size={world_size}")
+
     num_dwt_levels = args.num_dwt_levels
 
     loss_list = []
 
     # Create model
     if args.use_latent:
-        # assert args.image_size % 8 == 0, "Image size must be divisible by 8."
-        # latent_size = args.image_size // 8
         vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     # Fixed: Pass image_size parameter to CustomDataset
-    dataset = CustomDataset(args.data_path, split='train', image_size=args.image_size, train_ratio=args.train_split)
+    train_dataset = CustomDataset(args.data_path, split='train', feature_type=feature_type, num_dwt_levels=num_dwt_levels) 
+    val_dataset = CustomDataset(args.data_path, split='val', feature_type=feature_type, num_dwt_levels=num_dwt_levels)
+    shuffle = True if args.where == "local" else None
 
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-    loader = DataLoader(
-        dataset,
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank) if args.where == "cluster" else None
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank) if args.where == "cluster" else None
+    train_loader = DataLoader(
+        train_dataset,
         batch_size=args.global_batch_size,  # Use full batch size since no distribution
-        # shuffle=True,  # Enable shuffle for better class distribution
-        sampler=sampler,
+        shuffle=shuffle,  # Enable shuffle for better class distribution
+        sampler=train_sampler,
         num_workers=args.num_workers,  
         pin_memory=True,
         drop_last=True
     )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.global_batch_size,  # Use full batch size since no distribution
+        shuffle=shuffle,  # Enable shuffle for better class distribution
+        sampler=val_sampler,
+        num_workers=args.num_workers,  
+        pin_memory=True,
+        drop_last=False
+    )
     
     # Fixed: Use proper in_chanel parameter
     wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3, res_depth=5).to(device)
-    wavelet_docoder_model = DDP(wavelet_docoder_model, device_ids=[device])
+    if args.where == "cluster":
+        wavelet_docoder_model = DDP(wavelet_docoder_model, device_ids=[device])
     optimizer = torch.optim.AdamW(wavelet_docoder_model.parameters(), lr=1e-4, weight_decay=1e-2)
     logger = create_logger(args.results_dir)
     
     for epoch in range(args.epochs):
-        sampler.set_epoch(epoch)
-        for step, image in enumerate(loader):
+        if args.where == "cluster":
+            train_sampler.set_epoch(epoch)
+        for step, (img, label) in enumerate(train_loader):
             optimizer.zero_grad()
             start_time = time()
-            latent = image.to(device)
+            ll = img.to(device)
+            ll.squeeze_(1)  # (B, 1, C, H, W) -> (B, C, H, W)
+            label = label.to(device)
+            label.squeeze_(1)  # (B, 1, C, 3, H, W) -> (B, C, 3, H, W)
+            if epoch == 0 and step == 0 and rank == 0:
+                print(f"Input LL shape: {ll.shape}, label shape: {label.shape}")
 
-            if args.use_latent:
-                with torch.no_grad():
-                    latent = vae.encode(image.to(device)).latent_dist.sample() * 0.18215
-
-            ll, high_freq = extract_dwt_features(latent, num_dwt_levels=num_dwt_levels, device=device)
             # ll.shape = (B, C, H/2^n, W/2^n)
-            # high_freq.shape = (B, C, 3, H/2^n, W/2^n)  # 3 corresponds to (LH, HL, HH)
+            # label.shape = (B, C, 3, H/2^n, W/2^n)  # 3 corresponds to (LH, HL, HH)
              
-            num_dwt_levels_tensor = torch.ones(image.shape[0], 1, device=device, dtype=torch.float32) * num_dwt_levels     # batch size, 1
+            num_dwt_levels_tensor = torch.ones(ll.shape[0], 1, device=device, dtype=torch.float32) * num_dwt_levels     # batch size, 1
             output = wavelet_docoder_model(ll, num_dwt_levels_tensor)
-            loss = nn.MSELoss()(output, high_freq[-1])
+            loss = nn.MSELoss()(output, label)
             loss_list.append(loss.item())
             loss.backward()
             optimizer.step()
@@ -348,16 +380,43 @@ def main(args):
                 logger.info(f"Epoch {epoch}, step {step}, loss {loss.item():.4f}, time {time() - start_time:.2f}s")
                 print(f"Epoch {epoch}, step {step}, loss {loss.item():.4f}, time {time() - start_time:.2f}s")
         
-        if epoch % args.ckpt_every == 0 and rank == 0:
+        if epoch % args.ckpt_every == 0 and (args.where=='local' or rank == 0):
             # Fixed: Save model state dict properly without DDP wrapper
-            torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
+            val_loss = 0.0
+            if args.where == "cluster":
+                val_sampler.set_epoch(epoch)
+            with torch.no_grad():
+                wavelet_docoder_model.eval()
+                for ll, label in val_loader:
+                    ll = ll.to(device)  
+                    ll.squeeze_(1)  # (B, 1, C, H, W) -> (B, C, H, W)
+                    print("Validation LL shape:", ll.shape)
+                    label = label.to(device)
+                    label.squeeze_(1)  # (B, 1, C, 3, H, W) -> (B, C, 3, H, W)
+                    num_dwt_levels_tensor = torch.ones(ll.shape[0], 1, device=device, dtype=torch.float32) * num_dwt_levels
+                    output = wavelet_docoder_model(ll, num_dwt_levels_tensor)
+                    val_loss += nn.MSELoss()(output, label).item()
+                val_loss /= len(val_loader)  # Divide by number of batches, not dataset length
+                wavelet_docoder_model.train()  # Switch back to training mode
+            logger.info(f"Validation loss: {val_loss:.4f}")
+            print(f"Validation loss: {val_loss:.4f}")
+            if args.where == "local":
+                # os.makedirs(os.path.dirname(f"{args.results_dir}/{feature_type}"), exist_ok=True)
+                torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/{feature_type}/wavelet_decoder_epoch_{epoch}.pth")
+            else:
+                # os.makedirs(os.path.dirname(f"{args.results_dir}/{feature_type}"), exist_ok=True)
+                torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/{feature_type}/wavelet_decoder_epoch_{epoch}.pth")
             logger.info(f"Saved checkpoint at epoch {epoch}")
             print(f"Saved checkpoint at epoch {epoch} ")
     
     # Fixed: Save final model without DDP wrapper
-    if rank == 0:
-        torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth")
-        with open(f"{args.results_dir}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
+    if (args.where=='local' or rank == 0):
+        if args.where == "local":
+            torch.save(wavelet_docoder_model.state_dict(), f"{args.results_dir}/{feature_type}/wavelet_decoder_{num_dwt_levels}_final.pth")
+        else:   
+            torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/{feature_type}/wavelet_decoder_{num_dwt_levels}_final.pth")
+        # os.makedirs(f"{args.results_dir}/{feature_type}/wavelet_decoder_loss_{num_dwt_levels}.json", exist_ok=True)
+        with open(f"{args.results_dir}/{feature_type}/wavelet_decoder_loss_{num_dwt_levels}.json", 'w') as f:
             json.dump(loss_list, f)
 
         logger.info("Training complete.")
@@ -367,32 +426,32 @@ def eval(args):
     num_dwt_levels = args.num_dwt_levels
     wavelet_docoder_model = WaveletDecoder(in_chanel=4 if args.use_latent else 3, res_depth=5).to(device)
     # Fixed: Load state dict without DDP wrapper expectation
-    wavelet_docoder_model.load_state_dict(torch.load(f"{args.results_dir}/wavelet_decoder_{num_dwt_levels}_final.pth", map_location='cpu'))
+    feature_type = 'latent' if args.use_latent else 'image'
+    wavelet_docoder_model.load_state_dict(torch.load(f"{args.results_dir}/{feature_type}/wavelet_decoder_{num_dwt_levels}_final.pth", map_location='cpu'))
     wavelet_docoder_model.eval()
 
     if args.use_latent:
         vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     if args.ood_eval:
-        dataset = CustomDataset(args.ood_eval, image_size=args.image_size)
+        dataset = CustomDataset(args.ood_eval, split='test', test_data=args.ood_eval) 
     else:
-        dataset = CustomDataset(args.data_path, split='test', image_size=args.image_size)
+        dataset = CustomDataset(args.data_path, split='test', test_data=args.test_data)
 
     loader = DataLoader(
         dataset,
         batch_size=args.eval_batch_size,  # Evaluate one image at a time
         shuffle=False,
-        num_workers=0,  # Fixed: Set to 0 for Windows compatibility
+        num_workers=0,  
         pin_memory=True,
         drop_last=False
     )
-
-    os.makedirs(os.path.join(args.results_dir, f'eval_results_{num_dwt_levels}_dwt'), exist_ok=True)
+    os.makedirs(os.path.join(args.results_dir, f'/{feature_type}/eval_results_{num_dwt_levels}_dwt'), exist_ok=True)
 
     with torch.no_grad():
         error_list = []
         final_reconstruction_error = []
-        for idx, image in enumerate(loader):
+        for idx, (image, _) in enumerate(loader):
             latent = image.to(device)
 
             if args.use_latent:
@@ -415,7 +474,7 @@ def eval(args):
                 if i == num_dwt_levels:
                     # lh_pred, hl_pred, hh_pred = output[:, :, 0], output[:, :, 1], output[:, :, 2]
                     ll = DWTInverse(wave='haar', mode='zero').to(device)((ll, [output]))
-                    print("***********chkpt 2",ll.shape)
+                    # print("***********chkpt 2",ll.shape)
                 else:
                     print(i)
                     # print("***********chkpt 3",ll.shape)
@@ -434,15 +493,18 @@ def eval(args):
                 reconstructed_image = (reconstructed_image / 2 + 0.5).clamp(0, 1)
             else:
                 reconstructed_image = (ll / 2 + 0.5).clamp(0, 1)
-            save_image(reconstructed_image, os.path.join(args.results_dir, f'eval_results_{num_dwt_levels}_dwt', f'final_reconstructed_{idx}.png'))
+            os.makedirs(f"{args.results_dir}/{feature_type}/eval_results_{num_dwt_levels}_dwt", exist_ok=True)
+            save_image(reconstructed_image, os.path.join(args.results_dir, f"{feature_type}", f'eval_results_{num_dwt_levels}_dwt', f'final_reconstructed_{idx}.png'))
             if idx % 100 == 0:
                 print(f"Saved {idx} images")
+
 
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
+    parser.add_argument("--test-data", type=str, default=None)
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--global-batch-size", type=int, default=32)
@@ -457,21 +519,22 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--res-depth", type=int, default=5)
     parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--train-split", type=float, default=0.8)
+    parser.add_argument("--where", type=str, choices=["local", "cluster"], default="cluster", help="Run locally or on cluster")
     args = parser.parse_args()
     
     main(args)
-    if dist.get_rank() == 0:  # Only evaluate on rank 0
+    if args.where == "local" or dist.get_rank() == 0:
         eval(args)
         
         # Create zip file
-        import zipfile
-        import shutil
-        def create_zip_archive(source_dir, output_filename):
-            shutil.make_archive(output_filename.replace('.zip', ''), 'zip', source_dir)
+        # import zipfile
+        # import shutil
+        # def create_zip_archive(source_dir, output_filename):
+        #     shutil.make_archive(output_filename.replace('.zip', ''), 'zip', source_dir)
         
-        zip_filename = f"{args.results_dir}_training_results.zip"
-        create_zip_archive(args.results_dir, zip_filename)
-        print(f"Results saved and zipped to: {zip_filename}")
+        # zip_filename = f"{args.results_dir}_training_results.zip"
+        # create_zip_archive(args.results_dir, zip_filename)
+        # print(f"Results saved and zipped to: {zip_filename}")
     
-    cleanup()  
+    if args.where != "local":
+        cleanup()  
