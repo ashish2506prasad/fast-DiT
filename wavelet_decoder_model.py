@@ -303,7 +303,7 @@ def main(args):
         vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     # Fixed: Pass image_size parameter to CustomDataset
-    dataset = CustomDataset(args.data_path, split='train', image_size=args.image_size)
+    dataset = CustomDataset(args.data_path, split='train', image_size=args.image_size, train_ratio=args.train_split)
 
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
     loader = DataLoader(
@@ -346,11 +346,13 @@ def main(args):
             
             if step % args.log_every == 0:
                 logger.info(f"Epoch {epoch}, step {step}, loss {loss.item():.4f}, time {time() - start_time:.2f}s")
+                print(f"Epoch {epoch}, step {step}, loss {loss.item():.4f}, time {time() - start_time:.2f}s")
         
         if epoch % args.ckpt_every == 0 and rank == 0:
             # Fixed: Save model state dict properly without DDP wrapper
             torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
             logger.info(f"Saved checkpoint at epoch {epoch} in time {time() - start_time:.2f}s")
+            print(f"Saved checkpoint at epoch {epoch} in time {time() - start_time:.2f}s")
     
     # Fixed: Save final model without DDP wrapper
     if rank == 0:
@@ -442,12 +444,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--epochs", type=int, default=1400)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--global-batch-size", type=int, default=32)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     # parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument("--ckpt-every", type=int, default=10)
     parser.add_argument("--num-dwt-levels", type=int, default=1, help="Number of DWT levels to use for feature extraction.")
     parser.add_argument("--use-latent", type=bool, default=False, help="Use VAE latent space")
     parser.add_argument("--eval-batch-size", type=int, default=1)
@@ -455,6 +457,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--res-depth", type=int, default=5)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--train-split", type=float, default=0.8)
     args = parser.parse_args()
     
     main(args)
