@@ -351,8 +351,8 @@ def main(args):
         if epoch % args.ckpt_every == 0 and rank == 0:
             # Fixed: Save model state dict properly without DDP wrapper
             torch.save(wavelet_docoder_model.module.state_dict(), f"{args.results_dir}/wavelet_decoder_epoch_{epoch}.pth")
-            logger.info(f"Saved checkpoint at epoch {epoch} in time {time() - start_time:.2f}s")
-            print(f"Saved checkpoint at epoch {epoch} in time {time() - start_time:.2f}s")
+            logger.info(f"Saved checkpoint at epoch {epoch}")
+            print(f"Saved checkpoint at epoch {epoch} ")
     
     # Fixed: Save final model without DDP wrapper
     if rank == 0:
