@@ -296,6 +296,7 @@ def main(args):
         x, h = extract_dwt_features(x, num_dwt_levels=num_dwt_levels, device=device)
         x = x.detach().cpu().numpy()
         h = [level.detach().cpu().numpy() for level in h]
+        y = h[-1]  # Use only the highest frequency components for labels
         
         for i in range(x.shape[0]):
             np.save(f'{args.features_path}/imagenet256/val/{feature_type}_{num_dwt_levels}_dwt_LL/{val_steps}.npy', x[i:i+1])
