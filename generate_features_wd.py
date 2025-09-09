@@ -294,9 +294,8 @@ def main(args):
             if args.use_latent:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
         x, h = extract_dwt_features(x, num_dwt_levels=num_dwt_levels, device=device)
-        x = x.detach().cpu().numpy()  # (B, C, H/2^n, W/2^n)
-        h = h.detach().cpu().numpy()  # list [(B, C, 3, H/2^n, W/2^n)] of length num_dwt_levels
-        y = h[-1]  # Use only the highest frequency components for labels
+        x = x.detach().cpu().numpy()
+        h = [level.detach().cpu().numpy() for level in h]
         
         for i in range(x.shape[0]):
             np.save(f'{args.features_path}/imagenet256/val/{feature_type}_{num_dwt_levels}_dwt_LL/{val_steps}.npy', x[i:i+1])
