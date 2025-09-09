@@ -345,6 +345,6 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
     parser.add_argument("--num-dwt-levels", type=int, default=1, help="Number of DWT levels to use for feature extraction.")
-    parser.add_argument("--use-latent", action="store_true", help="Use VAE latent space")
+    parser.add_argument("--use-latent", type=bool, default=False, help="Whether to extract features from VAE latent space or directly from images.")
     args = parser.parse_args()
     main(args)
